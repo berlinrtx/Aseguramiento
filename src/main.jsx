@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import AuthScreen from './AuthScreen';
 import { supabase } from './lib/supabase';
-import { loadCloudWorkspace, upsertCloudTask } from './lib/workspace';
+import { addWorkspaceMember, loadCloudWorkspace, upsertCloudTask } from './lib/workspace';
 import {
   Activity, Archive, ArrowDown, ArrowUp, BookOpen, CalendarDays, Check,
   ChevronDown, CircleHelp, Clock3, Command, FileCheck2, FileText, Filter,
@@ -84,6 +84,7 @@ function App() {
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
   const [cloud, setCloud] = useState({ ready: false, boardId: null, error: '' });
+  const [memberModal, setMemberModal] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -98,7 +99,7 @@ function App() {
     loadCloudWorkspace(session.user.id, loadData().tasks).then((remote) => {
       if (!active) return;
       setData((current) => ({ ...current, tasks: remote.tasks.length ? remote.tasks : current.tasks }));
-      setCloud({ ready: true, boardId: remote.boardId, error: '' });
+      setCloud({ ready: true, boardId: remote.boardId, workspaceId: remote.workspaceId, error: '' });
     }).catch((error) => { if (active) setCloud({ ready: false, boardId: null, error: error.message || 'No se pudo conectar con Supabase' }); });
     return () => { active = false; };
   }, [session?.user?.id]);
@@ -150,7 +151,7 @@ function App() {
   async function signOut() { await supabase.auth.signOut(); notify('Sesión cerrada'); }
 
   return <div className="app-shell">
-    <Sidebar pages={filteredPages} activePage={data.selectedPage} search={search} setSearch={setSearch} onSelect={selectPage} onAdd={addPage} open={sidebarOpen} setOpen={setSidebarOpen} userName={displayName} userEmail={signedInUser.email} initials={initials} onSignOut={signOut} />
+    <Sidebar pages={filteredPages} activePage={data.selectedPage} search={search} setSearch={setSearch} onSelect={selectPage} onAdd={addPage} open={sidebarOpen} setOpen={setSidebarOpen} userName={displayName} userEmail={signedInUser.email} initials={initials} onSignOut={signOut} onManageMembers={() => setMemberModal(true)} />
     <main className="main-shell">
       <Topbar currentPage={currentPage} view={view} setView={setView} onMenu={() => setSidebarOpen(true)} onCommand={() => setModal('command')} inspectorOpen={inspectorOpen} setInspectorOpen={setInspectorOpen} />
       <div className="workspace-content">
@@ -163,13 +164,14 @@ function App() {
     {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
     {modal === 'task' && <TaskModal onClose={() => setModal(null)} onCreate={addTask} />}
     {modal === 'command' && <CommandPalette onClose={() => setModal(null)} onPage={selectPage} onBoard={() => { setView('board'); setModal(null); }} onDashboard={() => { setView('dashboard'); setModal(null); }} />}
+    {memberModal && <MemberModal workspaceId={cloud.workspaceId} onClose={() => setMemberModal(false)} onAdded={() => notify('Usuario agregado al espacio')} />}
   </div>;
 }
 
-function Sidebar({ pages, activePage, search, setSearch, onSelect, onAdd, open, setOpen, userName, userEmail, initials, onSignOut }) {
+function Sidebar({ pages, activePage, search, setSearch, onSelect, onAdd, open, setOpen, userName, userEmail, initials, onSignOut, onManageMembers }) {
   return <aside className={`sidebar ${open ? 'sidebar-open' : ''}`}>
     <div className="sidebar-top"><div className="brand-mark">A</div><div><div className="brand-name">Atlas</div><div className="brand-meta">Aseguramiento</div></div><button className="icon-button mobile-close" aria-label="Cerrar menú" onClick={() => setOpen(false)}><X size={17} /></button></div>
-    <div className="workspace-switch"><div className="workspace-dot">A</div><span className="workspace-name">Aseguramiento</span><ChevronDown size={14} /></div>
+    <button className="workspace-switch" onClick={onManageMembers} title="Compartir espacio de trabajo"><div className="workspace-dot">A</div><span className="workspace-name">Aseguramiento</span><UserRound size={14} /></button>
     <div className="sidebar-search"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar páginas" aria-label="Buscar páginas" />{search && <button onClick={() => setSearch('')} aria-label="Limpiar búsqueda"><X size={13} /></button>}<kbd>⌘ K</kbd></div>
     <div className="nav-label">Espacio de trabajo</div>
     <nav className="primary-nav"><button className="nav-item" onClick={() => onSelect('overview')}><Inbox size={16} />Inicio</button><button className="nav-item" onClick={() => onSelect('tests')}><Target size={16} />Mi trabajo<span className="nav-count">4</span></button></nav>
@@ -231,6 +233,14 @@ function TaskModal({ onClose, onCreate }) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState(''); const [priority, setPriority] = useState('medium'); const [tag, setTag] = useState('Frontend'); const [due, setDue] = useState('2026-10-31'); const [assignee, setAssignee] = useState('PV');
   const submit = (event) => { event.preventDefault(); if (!title.trim()) return; onCreate({ title: title.trim(), description: description.trim() || 'Sin descripción todavía.', priority, tag, due, status: 'backlog', assignee }); };
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title"><div className="modal-head"><div><span className="eyebrow">Nueva entrada</span><h2 id="task-modal-title">Crear tarea</h2></div><button className="icon-button" onClick={onClose} aria-label="Cerrar"><X size={18} /></button></div><form onSubmit={submit} noValidate><label className="field"><span>Título</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ej. Diseñar flujo de autenticación" required /></label><label className="field"><span>Descripción</span><textarea className="resize-none" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="¿Qué debe quedar listo?" /></label><div className="field-grid"><label className="field"><span>Prioridad</span><select value={priority} onChange={(event) => setPriority(event.target.value)}><option value="high">Alta</option><option value="medium">Media</option><option value="low">Baja</option></select></label><label className="field"><span>Fecha límite</span><input type="date" value={due} onChange={(event) => setDue(event.target.value)} /></label></div><div className="field-grid"><label className="field"><span>Responsable</span><select value={assignee} onChange={(event) => setAssignee(event.target.value)}><option value="PV">Paul Verlaine</option><option value="AR">Ana Ruiz</option><option value="MC">Marco Chen</option></select></label><label className="field"><span>Etiqueta / categoría</span><input value={tag} onChange={(event) => setTag(event.target.value)} /></label></div><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" type="submit"><Plus size={16} />Crear tarea</button></div></form></div></div>;
+}
+
+function MemberModal({ workspaceId, onClose, onAdded }) {
+  const [email, setEmail] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(event) { event.preventDefault(); if (!email.trim() || !workspaceId) return; setBusy(true); setMessage(''); try { await addWorkspaceMember(workspaceId, email); onAdded(); onClose(); } catch (error) { setMessage(error.message?.includes('No registered user') ? 'Ese correo todavía no tiene una cuenta registrada.' : error.message || 'No se pudo agregar el usuario.'); } finally { setBusy(false); } }
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="member-modal-title"><div className="modal-head"><div><span className="eyebrow">Espacio compartido</span><h2 id="member-modal-title">Agregar colaborador</h2></div><button className="icon-button" onClick={onClose} aria-label="Cerrar"><X size={18} /></button></div><p className="modal-copy">Agrega el correo de un usuario registrado para compartir este tablero y permitirle editar tareas.</p>{message && <div className="auth-message auth-error">{message}</div>}<form onSubmit={submit} noValidate><label className="field"><span>Correo del colaborador</span><input autoFocus type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="colaborador@correo.com" required /></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button" type="submit" disabled={busy}>{busy ? 'Agregando…' : 'Compartir tablero'}</button></div></form></div></div>;
 }
 
 function CommandPalette({ onClose, onPage, onBoard, onDashboard }) { return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><div className="command-palette" role="dialog" aria-modal="true"><div className="palette-search"><Search size={17} /><input autoFocus placeholder="Buscar una acción…" /><kbd>Esc</kbd></div><div className="palette-section"><span className="eyebrow">Navegar</span><button onClick={() => onPage('overview')}><BookOpen size={16} /><span>Ir a Visión general</span><kbd>↵</kbd></button><button onClick={onBoard}><LayoutList size={16} /><span>Abrir tablero</span><kbd>↵</kbd></button><button onClick={onDashboard}><LayoutDashboard size={16} /><span>Ver resumen</span><kbd>↵</kbd></button></div></div></div>; }

@@ -37,4 +37,16 @@ export async function upsertCloudTask(task, boardId, userId) {
   return fromRow(data);
 }
 
+export async function listWorkspaceMembers(workspaceId) {
+  const { data, error } = await supabase.from('atlas_workspace_members').select('user_id, role, created_at').eq('workspace_id', workspaceId).order('created_at');
+  if (error) throw error;
+  return data || [];
+}
+
+export async function addWorkspaceMember(workspaceId, email) {
+  const { data, error } = await supabase.rpc('atlas_add_member_by_email', { target_workspace_id: workspaceId, member_email: email });
+  if (error) throw error;
+  return data;
+}
+
 function fromRow(row) { return { id: row.id, cloudId: row.id, title: row.title, description: row.description, priority: row.priority, assignee: row.assignee, tag: row.tag, status: row.status, createdAt: row.created_at, startDate: row.start_date || '', due: row.due_date || '', subtasks: row.subtasks || [], comments: row.comments || [], activity: row.activity || [] }; }
