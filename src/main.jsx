@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import AuthScreen from './AuthScreen';
 import { supabase } from './lib/supabase';
+import { loadCloudWorkspace, upsertCloudTask } from './lib/workspace';
 import {
   Activity, Archive, ArrowDown, ArrowUp, BookOpen, CalendarDays, Check,
   ChevronDown, CircleHelp, Clock3, Command, FileCheck2, FileText, Filter,
@@ -82,6 +83,7 @@ function App() {
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [modal, setModal] = useState(null);
   const [toast, setToast] = useState('');
+  const [cloud, setCloud] = useState({ ready: false, boardId: null, error: '' });
 
   useEffect(() => {
     let mounted = true;
@@ -89,6 +91,17 @@ function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setAuthLoading(false); });
     return () => { mounted = false; subscription.unsubscribe(); };
   }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    let active = true;
+    loadCloudWorkspace(session.user.id, loadData().tasks).then((remote) => {
+      if (!active) return;
+      setData((current) => ({ ...current, tasks: remote.tasks.length ? remote.tasks : current.tasks }));
+      setCloud({ ready: true, boardId: remote.boardId, error: '' });
+    }).catch((error) => { if (active) setCloud({ ready: false, boardId: null, error: error.message || 'No se pudo conectar con Supabase' }); });
+    return () => { active = false; };
+  }, [session?.user?.id]);
 
   useEffect(() => localStorage.setItem(STORAGE_KEY, JSON.stringify(data)), [data]);
   useEffect(() => {
@@ -111,7 +124,12 @@ function App() {
   function selectPage(id) { setData((current) => ({ ...current, selectedPage: id })); setView('page'); setSidebarOpen(false); }
   function updatePage(patch) { setData((current) => ({ ...current, pages: current.pages.map((page) => page.id === current.selectedPage ? { ...page, ...patch } : page) })); }
   function updateTask(id, patch, activity) {
-    setData((current) => ({ ...current, tasks: current.tasks.map((task) => task.id === id ? { ...task, ...patch, activity: activity ? [...task.activity, { text: activity, at: new Date().toISOString() }] : task.activity } : task) }));
+    setData((current) => {
+      const tasks = current.tasks.map((task) => task.id === id ? { ...task, ...patch, activity: activity ? [...task.activity, { text: activity, at: new Date().toISOString() }] : task.activity } : task);
+      const changed = tasks.find((task) => task.id === id);
+      if (cloud.ready && changed?.cloudId) upsertCloudTask(changed, cloud.boardId, session.user.id).catch((error) => setCloud((value) => ({ ...value, error: error.message })));
+      return { ...current, tasks };
+    });
   }
   function moveTask(task, nextStatus) {
     const from = columns.find((column) => column.id === task.status)?.label;
@@ -121,7 +139,7 @@ function App() {
     updateTask(task.id, { status: nextStatus, startDate: task.startDate || (nextStatus !== 'backlog' ? TODAY() : '') }, `${CURRENT_USER} la movió de ${from} a ${to}`); notify(`Movida a ${to}`);
   }
   function addPage() { const page = { id: `page-${Date.now()}`, title: 'Nueva página', icon: 'file', type: 'page', eyebrow: 'Workspace / Sin clasificar', blocks: [{ id: `block-${Date.now()}`, type: 'paragraph', text: 'Empieza a escribir aquí…' }] }; setData((current) => ({ ...current, pages: [...current.pages, page], selectedPage: page.id })); setView('page'); notify('Página creada'); }
-  function addTask(payload) { const task = { ...payload, id: `task-${Date.now()}`, createdAt: TODAY(), startDate: '', activity: [{ text: `${CURRENT_USER} creó la tarea`, at: new Date().toISOString() }], comments: [], subtasks: [] }; setData((current) => ({ ...current, tasks: [...current.tasks, task] })); setSelectedTaskId(task.id); setModal(null); setInspectorOpen(true); notify('Tarea creada'); }
+  async function addTask(payload) { const task = { ...payload, id: `task-${Date.now()}`, createdAt: TODAY(), startDate: '', activity: [{ text: `${CURRENT_USER} creó la tarea`, at: new Date().toISOString() }], comments: [], subtasks: [] }; if (cloud.ready) { try { const saved = await upsertCloudTask(task, cloud.boardId, session.user.id); Object.assign(task, saved); } catch (error) { setCloud((value) => ({ ...value, error: error.message })); } } setData((current) => ({ ...current, tasks: [...current.tasks, task] })); setSelectedTaskId(task.id); setModal(null); setInspectorOpen(true); notify('Tarea creada'); }
 
   if (authLoading) return <div className="auth-loading"><div className="brand-mark">A</div><span>Preparando tu espacio…</span></div>;
   if (!session) return <AuthScreen />;
