@@ -14,7 +14,6 @@ import './styles.css';
 
 const STORAGE_KEY = 'atlas-workspace-v1';
 const TODAY = () => new Date().toISOString().slice(0, 10);
-const CURRENT_USER = 'Usuario actual';
 
 const initialData = {
   pages: [
@@ -117,6 +116,7 @@ function App() {
   const currentPage = data.pages.find((page) => page.id === data.selectedPage) || data.pages[0];
   const selectedTask = data.tasks.find((task) => task.id === selectedTaskId) || data.tasks[0];
   const filteredPages = data.pages.filter((page) => page.title.toLowerCase().includes(search.toLowerCase()));
+  const actorName = session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'Usuario';
   const stats = useMemo(() => ({ total: data.tasks.length, done: data.tasks.filter((task) => task.status === 'done').length, progress: data.tasks.filter((task) => task.status === 'progress').length, overdue: data.tasks.filter((task) => task.due && task.due < TODAY() && task.status !== 'done').length }), [data.tasks]);
 
   const notify = (message) => { setToast(message); };
@@ -137,10 +137,10 @@ function App() {
     const to = columns.find((column) => column.id === nextStatus)?.label;
     if (task.status === 'backlog' && nextStatus === 'review') { notify('La tarea debe pasar primero por En progreso'); return; }
     if (task.status === 'progress' && nextStatus === 'done') { notify('QA debe aprobar antes de completar la tarea'); return; }
-    updateTask(task.id, { status: nextStatus, startDate: task.startDate || (nextStatus !== 'backlog' ? TODAY() : '') }, `${CURRENT_USER} la movió de ${from} a ${to}`); notify(`Movida a ${to}`);
+    updateTask(task.id, { status: nextStatus, startDate: task.startDate || (nextStatus !== 'backlog' ? TODAY() : '') }, `${actorName} movió la tarea de ${from} a ${to}`); notify(`Movida a ${to}`);
   }
   function addPage() { const page = { id: `page-${Date.now()}`, title: 'Nueva página', icon: 'file', type: 'page', eyebrow: 'Workspace / Sin clasificar', blocks: [{ id: `block-${Date.now()}`, type: 'paragraph', text: 'Empieza a escribir aquí…' }] }; setData((current) => ({ ...current, pages: [...current.pages, page], selectedPage: page.id })); setView('page'); notify('Página creada'); }
-  async function addTask(payload) { const task = { ...payload, id: `task-${Date.now()}`, createdAt: TODAY(), startDate: '', activity: [{ text: `${CURRENT_USER} creó la tarea`, at: new Date().toISOString() }], comments: [], subtasks: [] }; if (cloud.ready) { try { const saved = await upsertCloudTask(task, cloud.boardId, session.user.id); Object.assign(task, saved); } catch (error) { setCloud((value) => ({ ...value, error: error.message })); } } setData((current) => ({ ...current, tasks: [...current.tasks, task] })); setSelectedTaskId(task.id); setModal(null); setInspectorOpen(true); notify('Tarea creada'); }
+  async function addTask(payload) { const task = { ...payload, id: `task-${Date.now()}`, createdAt: TODAY(), startDate: '', activity: [{ text: `${actorName} creó la tarea`, at: new Date().toISOString() }], comments: [], subtasks: [] }; if (cloud.ready) { try { const saved = await upsertCloudTask(task, cloud.boardId, session.user.id); Object.assign(task, saved); } catch (error) { setCloud((value) => ({ ...value, error: error.message })); } } setData((current) => ({ ...current, tasks: [...current.tasks, task] })); setSelectedTaskId(task.id); setModal(null); setInspectorOpen(true); notify('Tarea creada'); }
 
   if (authLoading) return <div className="auth-loading"><div className="brand-mark">A</div><span>Preparando tu espacio…</span></div>;
   if (!session) return <AuthScreen />;
@@ -160,7 +160,7 @@ function App() {
         {view === 'dashboard' && <Dashboard stats={stats} tasks={data.tasks} />}
       </div>
     </main>
-    {inspectorOpen && <Inspector task={selectedTask} onClose={() => setInspectorOpen(false)} onMove={moveTask} updateTask={updateTask} />}
+    {inspectorOpen && <Inspector task={selectedTask} actorName={actorName} onClose={() => setInspectorOpen(false)} onMove={moveTask} updateTask={updateTask} />}
     {toast && <div className="toast" role="status"><Check size={16} />{toast}</div>}
     {modal === 'task' && <TaskModal onClose={() => setModal(null)} onCreate={addTask} />}
     {modal === 'command' && <CommandPalette onClose={() => setModal(null)} onPage={selectPage} onBoard={() => { setView('board'); setModal(null); }} onDashboard={() => { setView('dashboard'); setModal(null); }} />}
@@ -211,13 +211,13 @@ function TaskCard({ task, onClick, draggable, onDragStart }) {
   return <button className={`task-card ${overdue ? 'is-overdue' : ''}`} onClick={onClick} draggable={draggable} onDragStart={onDragStart}><div className="task-card-top"><span className={`priority priority-${task.priority}`}><Zap size={11} />{task.priority === 'high' ? 'Alta' : task.priority === 'medium' ? 'Media' : 'Baja'}</span><MoreHorizontal size={16} /></div><strong>{task.title}</strong><p>{task.description}</p><div className="task-card-meta"><span className="task-tag">{task.tag}</span>{task.subtasks.length > 0 && <span className="subtask-count"><Check size={12} />{completed}/{task.subtasks.length}</span>}<Avatar initials={task.assignee} /></div>{overdue && <div className="overdue-label"><Clock3 size={12} />Vencida · {formatDate(task.due)}</div>}</button>;
 }
 
-function Inspector({ task, onClose, onMove, updateTask }) {
+function Inspector({ task, actorName, onClose, onMove, updateTask }) {
   if (!task) return null;
   const completed = task.subtasks.filter((item) => item.done).length;
-  function toggleSubtask(id) { const subtasks = task.subtasks.map((item) => item.id === id ? { ...item, done: !item.done } : item); updateTask(task.id, { subtasks }, 'Paul actualizó una subtarea'); }
-  function setField(field, value) { updateTask(task.id, { [field]: value }, `Paul actualizó ${field === 'due' ? 'la fecha límite' : field === 'startDate' ? 'la fecha de inicio' : 'la tarea'}`); }
-  function addSubtask(event) { if (event.key !== 'Enter' || !event.currentTarget.value.trim()) return; const subtasks = [...task.subtasks, { id: `sub-${Date.now()}`, text: event.currentTarget.value.trim(), done: false }]; updateTask(task.id, { subtasks }, 'Paul agregó una subtarea'); event.currentTarget.value = ''; }
-  function addComment(event) { if (event.key !== 'Enter' || !event.currentTarget.value.trim()) return; const comments = [...(task.comments || []), { author: CURRENT_USER, text: event.currentTarget.value.trim(), at: new Date().toISOString() }]; updateTask(task.id, { comments }, 'Paul agregó un comentario'); event.currentTarget.value = ''; }
+  function toggleSubtask(id) { const subtasks = task.subtasks.map((item) => item.id === id ? { ...item, done: !item.done } : item); updateTask(task.id, { subtasks }, `${actorName} actualizó una subtarea`); }
+  function setField(field, value) { updateTask(task.id, { [field]: value }, `${actorName} actualizó ${field === 'due' ? 'la fecha límite' : field === 'startDate' ? 'la fecha de inicio' : 'la tarea'}`); }
+  function addSubtask(event) { if (event.key !== 'Enter' || !event.currentTarget.value.trim()) return; const subtasks = [...task.subtasks, { id: `sub-${Date.now()}`, text: event.currentTarget.value.trim(), done: false }]; updateTask(task.id, { subtasks }, `${actorName} agregó una subtarea`); event.currentTarget.value = ''; }
+  function addComment(event) { if (event.key !== 'Enter' || !event.currentTarget.value.trim()) return; const comments = [...(task.comments || []), { author: actorName, text: event.currentTarget.value.trim(), at: new Date().toISOString() }]; updateTask(task.id, { comments }, `${actorName} agregó un comentario`); event.currentTarget.value = ''; }
   const overdue = task.due && task.due < TODAY() && task.status !== 'done';
   return <aside className="inspector"><div className="inspector-head"><div><span className="eyebrow">Tarea seleccionada</span><strong>Propiedades</strong></div><button className="icon-button" onClick={onClose} aria-label="Cerrar panel"><X size={17} /></button></div><div className="inspector-scroll"><div className="inspector-title"><div className={`status-pip pip-${task.status}`} /><h2>{task.title}</h2><button className="icon-button tiny" disabled aria-label="Más opciones"><MoreHorizontal size={15} /></button></div><p className="inspector-description">{task.description}</p><div className="property-list"><label><span>Estado</span><select value={task.status} onChange={(event) => onMove(task, event.target.value)}>{columns.map((column) => <option key={column.id} value={column.id}>{column.label}</option>)}</select></label><div className="property-row"><span>Prioridad</span><strong className={`priority priority-${task.priority}`}>{task.priority === 'high' ? 'Alta' : task.priority === 'medium' ? 'Media' : 'Baja'}</strong></div><div className="property-row"><span>Responsable</span><span className="person"><Avatar initials={task.assignee} />{task.assignee === 'PV' ? 'Paul Verlaine' : task.assignee === 'AR' ? 'Ana Ruiz' : 'Marco Chen'}</span></div><label><span>Creada</span><input type="date" value={task.createdAt || ''} onChange={(event) => setField('createdAt', event.target.value)} /></label><label><span>Inicio</span><input type="date" value={task.startDate || ''} onChange={(event) => setField('startDate', event.target.value)} /></label><label><span>Fecha límite</span><input className={overdue ? 'danger-text' : ''} type="date" value={task.due || ''} onChange={(event) => setField('due', event.target.value)} /></label></div><div className="inspector-section"><div className="section-label"><span>Subtareas / checklist</span><span>{completed}/{task.subtasks.length} · {task.subtasks.length ? Math.round((completed / task.subtasks.length) * 100) : 0}%</span></div><div className="progress-track"><span style={{ width: task.subtasks.length ? `${(completed / task.subtasks.length) * 100}%` : '0%' }} /></div><div className="subtask-list">{task.subtasks.length ? task.subtasks.map((subtask) => <label key={subtask.id} className={`subtask ${subtask.done ? 'done' : ''}`}><input type="checkbox" checked={subtask.done} onChange={() => toggleSubtask(subtask.id)} /><span>{subtask.text}</span></label>) : <span className="empty-note">No hay subtareas todavía.</span>}<input className="inline-add" placeholder="Agregar subtarea + Enter" onKeyDown={addSubtask} /></div></div><div className="inspector-section"><div className="section-label"><span>Comentarios</span><span>{(task.comments || []).length}</span></div><div className="comment-list">{(task.comments || []).map((comment, index) => <div className="comment" key={`${comment.at}-${index}`}><strong>{comment.author}</strong><span>{comment.text}</span><small>{formatDateTime(comment.at)}</small></div>)}</div><input className="inline-add" placeholder="Escribir comentario + Enter" onKeyDown={addComment} /></div><div className="inspector-section activity-section"><div className="section-label"><span>Actividad / trazabilidad</span><Activity size={14} /></div><div className="activity-list">{task.activity.map((item, index) => <div className="activity-item" key={`${item.text}-${index}`}><div className="activity-dot" /><div><strong>{item.text}</strong><span>{formatDateTime(item.at)}</span></div></div>)}</div></div></div></aside>;
 }
